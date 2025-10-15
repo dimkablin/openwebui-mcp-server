@@ -1,4 +1,4 @@
-"""Entrypoint"""
+"""Analytics Server - аналитика и графики"""
 
 import click
 from mcp.server.fastmcp import FastMCP
@@ -14,18 +14,18 @@ from .tools import Tools
 # ---- CLI ----
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option("--host", default="0.0.0.0", show_default=True, help="Host interface.")
-@click.option("--port", default=8001, type=int, show_default=True, help="Port number.")
+@click.option("--port", default=8004, type=int, show_default=True, help="Port number.")
 @click.option(
     "--path",
-    default="/db_connector",
+    default="/analytics",
     type=str,
     show_default=True,
     help="URL prefix of mcp server.",
 )
 def main(host: str = None, port: int = None, path: str = None) -> None:
-    """Run MCP server over Streamable HTTP."""
+    """Run Analytics MCP server over Streamable HTTP."""
     mcp = FastMCP(
-        "mcp-server",
+        "analytics-server",
         lifespan=app_lifespan,
         host=host,
         port=port,

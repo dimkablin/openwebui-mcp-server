@@ -1,12 +1,16 @@
 {
   "mcpServers": {
-        "db_connector": {
+        "journal": {
             "type": "streamable-http",
-            "url": "http://mcp-server-db-connector:8001/db_connector"
+            "url": "http://mcp-server-journal:8003/journal"
         },
-        "csv_loader": {
+        "analytics": {
             "type": "streamable-http",
-            "url": "http://mcp-server-csv-loader:8002/csv_loader"
+            "url": "http://mcp-server-analytics:8004/analytics"
+        },
+        "scheduler": {
+            "type": "streamable-http",
+            "url": "http://mcp-server-scheduler:8005/scheduler"
         }
   }
 }

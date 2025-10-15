@@ -1,108 +1,126 @@
-# mcp_server/tools/__init__.py
+"""Journal Server Tools - хранение и обработка диалогов"""
 from __future__ import annotations
 
-import asyncio
+from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 
 
 class Tools:
     """
-    Tool provider that registers instance methods as MCP tools.
+    Journal Server Tools - управление записями дневника и оценками.
 
-    Usage:
-        Tools(mcp)  # registers tools on init
+    Функции:
+    - create_entry: создать запись/сообщение
+    - extract_assessment: извлечь оценку настроения
+    - save_assessment: сохранить оценку в БД
+    - get_context: получить последние сообщения и метаданные
     """
 
     def __init__(self, mcp_instance: FastMCP) -> None:
-        # echo(message: str) -> str
+        # create_entry(text: str, mood: str | None, tags: list[str] | None) -> dict
         mcp_instance.add_tool(
-            self.echo,
-            name="echo",
-            description=
-                "Echo back the provided message (useful for connectivity checks).",
+            self.create_entry,
+            name="create_entry",
+            description="Создать новую запись в дневнике с текстом, настроением и тегами.",
         )
 
-        # calculate(a: float, b: float, operation: str = 'add') -> float
+        # extract_assessment(text: str) -> dict
         mcp_instance.add_tool(
-            self.calculate,
-            name="calculate",
+            self.extract_assessment,
+            name="extract_assessment",
             description=(
-                "Perform a basic arithmetic operation on two numbers. "
-                "Supported operations: add, subtract, multiply, divide."
+                "Извлечь оценку настроения из текста: valence (валентность), "
+                "anxiety (тревожность), energy (энергия) и другие метрики."
             ),
         )
 
-        # long_task(iterations: int, ctx: Context) -> str  (reports progress)
+        # save_assessment(entry_id: int, assessment: dict) -> dict
         mcp_instance.add_tool(
-            self.long_task,
-            name="long_task",
-            description=
-                "Run a long-running operation and report progress to the client.",
+            self.save_assessment,
+            name="save_assessment",
+            description="Сохранить оценку настроения в базу данных для записи.",
         )
 
-        # fetch_data(url: str, ctx: Context) -> str
+        # get_context(limit: int = 10) -> dict
         mcp_instance.add_tool(
-            self.fetch_data,
-            name="fetch_data",
-            description=
-                "Fetch text data from the given URL and return the response body.",
+            self.get_context,
+            name="get_context",
+            description=(
+                "Получить последние сообщения из дневника и метаданные "
+                "для контекста разговора."
+            ),
         )
 
     # -------- tool methods --------
 
-    def echo(self, message: str) -> str:
-        """Echo a message back."""
-        return f"Echo: {message}"
-
-    async def calculate(self, a: float, b: float, operation: str = "add") -> float:
-        """Perform a calculation on two numbers."""
-        if operation == "add":
-            return a + b
-        if operation == "subtract":
-            return a - b
-        if operation == "multiply":
-            return a * b
-        if operation == "divide":
-            if b == 0:
-                raise ValueError("Cannot divide by zero")
-            return a / b
-        raise ValueError(f"Unknown operation: {operation!r}")
-
-    async def long_task(self, iterations: int, ctx: Context) -> str:
-        """A long-running task that reports progress via Context."""
-        ctx.info(f"Starting long task with {iterations} iterations")
-        for i in range(iterations):
-            ctx.debug(f"Processing iteration {i + 1}/{iterations}")
-            await ctx.report_progress(
-                i, iterations, message=f"Processing {i + 1}/{iterations}"
-            )
-            await asyncio.sleep(0.1)
-        ctx.info("Long task completed")
-        return f"Completed {iterations} iterations"
-
-    async def fetch_data(self, url: str, ctx: Context) -> str:
+    async def create_entry(
+        self,
+        text: str,
+        mood: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        ctx: Context = None,
+    ) -> Dict[str, Any]:
         """
-        Fetch data from a URL and return the
-        response text (handles common errors).
-        """
-        import httpx
+        Создать новую запись в дневнике.
 
-        try:
-            ctx.info(f"Fetching data from {url}")
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(url, timeout=10.0)
-                resp.raise_for_status()
-                return resp.text
-        except httpx.RequestError as e:
-            msg = f"Connection error: {e}"
-            ctx.error(msg)
-            return msg
-        except httpx.HTTPStatusError as e:
-            msg = f"HTTP error {e.response.status_code}: {e.response.reason_phrase}"
-            ctx.error(msg)
-            return msg
-        except Exception as e:  # noqa: BLE001
-            msg = f"Unexpected error: {e}"
-            ctx.error(msg)
-            return msg
+        Args:
+            text: Текст записи
+            mood: Настроение (опционально)
+            tags: Список тегов (опционально)
+            ctx: MCP Context
+
+        Returns:
+            Информация о созданной записи
+        """
+        # TODO: Реализовать сохранение в PostgreSQL
+        pass
+
+    async def extract_assessment(
+        self, text: str, ctx: Context = None
+    ) -> Dict[str, Any]:
+        """
+        Извлечь оценку настроения из текста.
+
+        Args:
+            text: Текст для анализа
+            ctx: MCP Context
+
+        Returns:
+            Словарь с метриками: valence, anxiety, energy, etc.
+        """
+        # TODO: Реализовать анализ с помощью LLM или правил
+        pass
+
+    async def save_assessment(
+        self, entry_id: int, assessment: Dict[str, Any], ctx: Context = None
+    ) -> Dict[str, Any]:
+        """
+        Сохранить оценку настроения в БД.
+
+        Args:
+            entry_id: ID записи в дневнике
+            assessment: Словарь с оценками
+            ctx: MCP Context
+
+        Returns:
+            Результат сохранения
+        """
+        # TODO: Реализовать сохранение в PostgreSQL
+        pass
+
+    async def get_context(
+        self, limit: int = 10, ctx: Context = None
+    ) -> Dict[str, Any]:
+        """
+        Получить последние записи и метаданные для контекста.
+
+        Args:
+            limit: Количество последних записей
+            ctx: MCP Context
+
+        Returns:
+            Словарь с записями и метаданными
+        """
+        # TODO: Реализовать получение из PostgreSQL
+        pass

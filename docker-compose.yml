@@ -70,63 +70,89 @@ services:
               count: all
               capabilities: [gpu]
 
-  mcp-server-db-connector:
+  mcp-server-journal:
     build:
       context: .
       dockerfile: Dockerfile
     image: mcp_server:latest
-    command: ["uv", "run", "-m", "app.db_connector.main", "--host", "0.0.0.0", "--port", "8001", "--path", "/db_connector"]
-    expose: ["8001"]
-    ports: ["8001:8001"]
+    command: ["uv", "run", "-m", "app.journal_server.main", "--host", "0.0.0.0", "--port", "8003", "--path", "/journal"]
+    expose: ["8003"]
+    ports: ["8003:8003"]
     restart: unless-stopped
     networks: [app]
     env_file:
       - .env
-    volumes:
-      - profiling_reports:/app/profiling_reports
     environment:
-      - PROFILING_REPORTS_DIR=/app/profiling_reports
-      - MCP_SERVER_BASE_URL=http://localhost:8001
+      - MCP_SERVER_BASE_URL=http://localhost:8003
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://0.0.0.0:8001/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://0.0.0.0:8003/health >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 20s
 
-  mcp-server-csv-loader:
+  mcp-server-analytics:
     build:
       context: .
       dockerfile: Dockerfile
     image: mcp_server:latest
-    command: ["uv", "run", "-m", "app.csv_loader.main", "--host", "0.0.0.0", "--port", "8002", "--path", "/csv_loader"]
-    expose: ["8002"]
-    ports: ["8002:8002"]
+    command: ["uv", "run", "-m", "app.analytics_server.main", "--host", "0.0.0.0", "--port", "8004", "--path", "/analytics"]
+    expose: ["8004"]
+    ports: ["8004:8004"]
     restart: unless-stopped
     networks: [app]
     env_file:
       - .env
     volumes:
-      - csv_storage:/app/csv_data
-      - csv_charts:/app/csv_charts
+      - analytics_charts:/app/analytics_charts
     environment:
-      - CSV_STORAGE_DIR=/app/csv_data
-      - CSV_CHARTS_DIR=/app/csv_charts
-      - MCP_SERVER_BASE_URL=http://localhost:8002
+      - ANALYTICS_CHARTS_DIR=/app/analytics_charts
+      - MCP_SERVER_BASE_URL=http://localhost:8004
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://0.0.0.0:8002/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://0.0.0.0:8004/health >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 20s
 
+  mcp-server-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcp_server:latest
+    command: ["uv", "run", "-m", "app.scheduler_server.main", "--host", "0.0.0.0", "--port", "8005", "--path", "/scheduler"]
+    expose: ["8005"]
+    ports: ["8005:8005"]
+    restart: unless-stopped
+    networks: [app]
+    env_file:
+      - .env
+    environment:
+      - MCP_SERVER_BASE_URL=http://localhost:8005
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://0.0.0.0:8005/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   mcpo:
     image: ghcr.io/open-webui/mcpo:latest
     depends_on:
-      mcp-server-db-connector:
+      mcp-server-journal:
         condition: service_healthy
-      mcp-server-csv-loader:
+      mcp-server-analytics:
+        condition: service_healthy
+      mcp-server-scheduler:
         condition: service_healthy
     volumes:
       - ./mcpo.config.json:/app/mcpo.config.json:ro
@@ -142,6 +168,4 @@ volumes:
   postgres_data:
   ollama_data:
   openwebui_data:
-  profiling_reports:
-  csv_storage:
-  csv_charts:
+  analytics_charts:
