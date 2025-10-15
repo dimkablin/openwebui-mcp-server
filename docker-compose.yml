@@ -9,7 +9,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_data:/var/lib/postgresql/data
     restart: always
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d ai_assistant"]
@@ -34,7 +34,7 @@ services:
       - HF_HUB_OFFLINE=1
       - AIOHTTP_CLIENT_SESSION_SSL=False
     volumes:
-      - openwebui_data:/app/backend/data
+      - ./openwebui_data:/app/backend/data
     restart: always
     networks:
       - app
@@ -107,7 +107,7 @@ services:
     env_file:
       - .env
     volumes:
-      - analytics_charts:/app/analytics_charts
+      - ./analytics_charts:/app/analytics_charts
     environment:
       - ANALYTICS_CHARTS_DIR=/app/analytics_charts
       - MCP_SERVER_BASE_URL=http://localhost:8004

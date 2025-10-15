@@ -11,6 +11,8 @@ uv.lock
 # volumes
 postgres_data/*
 ollama_data/*
+openwebui_data/*
+analytics_charts/*
 
 # Distribution / packaging
 build/
