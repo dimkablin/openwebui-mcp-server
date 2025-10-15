@@ -53,15 +53,22 @@ services:
       - "11434:11434"
     volumes:
       - ./ollama_data:/root/.ollama
+      - ./scripts/preload-model.sh:/usr/local/bin/preload-model.sh:ro
+    env_file:
+      - .env
+    environment:
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:14b-instruct}
+      - OLLAMA_KEEP_ALIVE=-1
+    entrypoint: ["/bin/bash", "/usr/local/bin/preload-model.sh"]
     restart: always
     networks:
       - app
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 30s
     deploy:
       resources:
         reservations:
