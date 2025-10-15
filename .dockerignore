@@ -1,0 +1,29 @@
+.DS_Store
+
+__pycache__
+.pytest_cache
+*.out
+.*
+
+htmlcov/
+coverage.xml
+.coverage
+
+# VCS/IDE
+.git
+.gitignore
+.idea
+.vscode
+
+# локальные окружения и кеши
+.venv
+*.egg-info
+*.pyc
+.cache
+dist
+build
+
+# случайные папки верхнего уровня
+root
+node_modules
+

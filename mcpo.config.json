@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+        "db_connector": {
+            "type": "streamable-http",
+            "url": "http://mcp-server-db-connector:8001/db_connector"
+        },
+        "csv_loader": {
+            "type": "streamable-http",
+            "url": "http://mcp-server-csv-loader:8002/csv_loader"
+        }
+  }
+}

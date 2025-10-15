@@ -1,0 +1,147 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres_ai
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgress
+      - POSTGRES_DB=ai_assistant
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_assistant"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    ports:
+      - "3000:8080"
+    container_name: openwebui
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgress@postgres:5432/ai_assistant
+      - OPENAI_API_BASE_URLS=http://ollama:11434/v1
+      - OPENAI_API_KEYS=anything
+      - ENABLE_OPENAI_API=true
+      - ENABLE_EXTERNAL_TOOLS=true
+      - EXTERNAL_TOOLS_URL=http://mcpo:8081
+      - HF_HUB_OFFLINE=1
+      - AIOHTTP_CLIENT_SESSION_SSL=False
+    volumes:
+      - openwebui_data:/app/backend/data
+    restart: always
+    networks:
+      - app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+      mcpo:
+        condition: service_started
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama_data:/root/.ollama
+    restart: always
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  mcp-server-db-connector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcp_server:latest
+    command: ["uv", "run", "-m", "app.db_connector.main", "--host", "0.0.0.0", "--port", "8001", "--path", "/db_connector"]
+    expose: ["8001"]
+    ports: ["8001:8001"]
+    restart: unless-stopped
+    networks: [app]
+    env_file:
+      - .env
+    volumes:
+      - profiling_reports:/app/profiling_reports
+    environment:
+      - PROFILING_REPORTS_DIR=/app/profiling_reports
+      - MCP_SERVER_BASE_URL=http://localhost:8001
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://0.0.0.0:8001/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  mcp-server-csv-loader:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcp_server:latest
+    command: ["uv", "run", "-m", "app.csv_loader.main", "--host", "0.0.0.0", "--port", "8002", "--path", "/csv_loader"]
+    expose: ["8002"]
+    ports: ["8002:8002"]
+    restart: unless-stopped
+    networks: [app]
+    env_file:
+      - .env
+    volumes:
+      - csv_storage:/app/csv_data
+      - csv_charts:/app/csv_charts
+    environment:
+      - CSV_STORAGE_DIR=/app/csv_data
+      - CSV_CHARTS_DIR=/app/csv_charts
+      - MCP_SERVER_BASE_URL=http://localhost:8002
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://0.0.0.0:8002/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+
+  mcpo:
+    image: ghcr.io/open-webui/mcpo:latest
+    depends_on:
+      mcp-server-db-connector:
+        condition: service_healthy
+      mcp-server-csv-loader:
+        condition: service_healthy
+    volumes:
+      - ./mcpo.config.json:/app/mcpo.config.json:ro
+    command: ["mcpo", "mcpo", "--host", "0.0.0.0", "--port", "8081", "--config", "/app/mcpo.config.json"]
+    ports: ["8100:8081"]
+    restart: unless-stopped
+    networks: [app]
+
+networks:
+  app: {}
+
+volumes:
+  postgres_data:
+  ollama_data:
+  openwebui_data:
+  profiling_reports:
+  csv_storage:
+  csv_charts:
