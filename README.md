@@ -96,6 +96,11 @@
 - **analytics**: asyncpg, pandas, matplotlib, plotly
 - **scheduler**: asyncpg, apscheduler
 
+### Оптимизация Ollama:
+- **OLLAMA_KEEP_ALIVE=-1** - модель остаётся в памяти постоянно
+- **Автоматическая предзагрузка** - пустой запрос при старте загружает модель в RAM
+- **Результат**: первый запрос уже быстрый, без сообщения "loading tensors"
+
 ---
 
 ## Быстрый запуск

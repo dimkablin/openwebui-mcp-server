@@ -27,3 +27,8 @@ build
 root
 node_modules
 
+# данные Docker volumes
+ollama_data
+postgres_data
+openwebui_data
+analytics_charts

@@ -52,7 +52,7 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - ./ollama_data:/root/.ollama
+      - ollama_data:/root/.ollama
       - ./scripts/preload-model.sh:/usr/local/bin/preload-model.sh:ro
     env_file:
       - .env
@@ -64,11 +64,11 @@ services:
     networks:
       - app
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD", "ollama", "list"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 90s
     deploy:
       resources:
         reservations:
