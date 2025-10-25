@@ -77,6 +77,34 @@ services:
               count: all
               capabilities: [gpu]
 
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    environment:
+      - LITELLM_MASTER_KEY=sk-litellm-master-key
+      - LITELLM_LOG=DEBUG
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    restart: always
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
   mcp-server-journal:
     build:
       context: .

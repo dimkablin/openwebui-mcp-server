@@ -1,10 +1,10 @@
 """
-Advanced Memory RAG Filter for OpenWebUI using Ollama Embeddings
+Advanced Memory RAG Filter for OpenWebUI using LiteLLM Embeddings (BGE-M3)
 Долговременная память + RAG по истории чата для работы с большими диалогами
 
 Возможности:
 1. ДОЛГОВРЕМЕННАЯ ПАМЯТЬ (Long-term Memory):
-   - Векторный поиск релевантных воспоминаний через Ollama Embeddings API
+   - Векторный поиск релевантных воспоминаний через LiteLLM Embeddings API (BGE-M3)
    - Автоматическое сохранение знаний по запросу пользователя
    - Инъекция персональных воспоминаний в контекст LLM
 
@@ -15,16 +15,17 @@ Advanced Memory RAG Filter for OpenWebUI using Ollama Embeddings
    - Подтягивание забытого контекста при длинных диалогах
 
 3. ИНТЕГРАЦИЯ:
-   - Работает с локальным Ollama (без дополнительных зависимостей)
+   - LiteLLM для эмбеддингов (BGE-M3)
    - Минимум установки - только aiohttp
    - Хранение в памяти (только текущая сессия)
 
 Использование:
-1. Убедитесь что Ollama запущен и доступен
-2. Загрузите модели:
-   - ollama pull nomic-embed-text  (для embeddings)
-   - ollama pull llama3.2:latest   (для суммаризации)
+1. Настройте доступ к LiteLLM API:
+   - litellm_base_url: URL вашего LiteLLM сервера
+   - litellm_api_key: API ключ для доступа
+2. Модель BGE-M3 должна быть доступна на LiteLLM сервере
 3. Добавьте фильтр в OpenWebUI через Settings → Functions
+4. Суммаризация использует модель из чата автоматически (GPT-4, Claude, или любую другую)
 
 Примеры использования:
 
@@ -35,7 +36,10 @@ A) Добавление знаний (long-term memory):
    - "remember that I prefer dark mode"
    - "save to memory: my favorite color is blue"
 
-B) Автоматический RAG по истории чата:
+B) Очистка всех воспоминаний:
+   - "/clear" - удаляет все сохранённые воспоминания пользователя
+
+C) Автоматический RAG по истории чата:
    Сценарий: Вы работаете с данными CSV, обсуждаете анализ 10 сообщений,
    затем спрашиваете "а что было с колонкой sales?"
    → Фильтр автоматически находит релевантные сообщения из начала диалога
@@ -56,39 +60,45 @@ from pydantic import BaseModel, Field
 
 # Импорты для работы с памятью OpenWebUI
 try:
-    from open_webui.routers.memories import query_memory, QueryMemoryForm
-    from open_webui.models.memories import Memories, MemoryModel
+    from open_webui.models.memories import Memories
 except ImportError:
     # Fallback для тестирования вне OpenWebUI
-    query_memory = None
-    QueryMemoryForm = None
     Memories = None
-    MemoryModel = None
 
 # Настройка логирования
 logger = logging.getLogger("openwebui.filters.memory_rag_ollama")
 
 
 class Filter:
-    """RAG-only фильтр для поиска и инъекции воспоминаний через Ollama"""
+    """RAG фильтр для поиска и инъекции воспоминаний через LiteLLM (BGE-M3)"""
 
     class Valves(BaseModel):
         """Настройки фильтра"""
 
-        # === Ollama Configuration ===
-        ollama_base_url: str = Field(
-            default="http://host.docker.internal:11434",
-            description="URL Ollama API (внутри Docker используйте host.docker.internal)",
+        # === LiteLLM Configuration (для эмбеддингов BGE-M3) ===
+        litellm_base_url: str = Field(
+            default="http://litellm:4000",
+            description="URL LiteLLM API для эмбеддингов BGE-M3 (внутри Docker: http://litellm:4000, вне: http://localhost:4000)",
+        )
+
+        litellm_api_key: str = Field(
+            default="sk-litellm-master-key",
+            description="API ключ для LiteLLM (Authorization: Bearer)",
         )
 
         embedding_model: str = Field(
-            default="nomic-embed-text",
-            description="Модель для генерации эмбеддингов (nomic-embed-text, mxbai-embed-large, etc.)",
+            default="bge-m3",
+            description="Модель для генерации эмбеддингов на LiteLLM",
+        )
+
+        use_chat_model_for_summarization: bool = Field(
+            default=True,
+            description="Использовать модель из чата для суммаризации",
         )
 
         # === Векторный поиск ===
         vector_similarity_threshold: float = Field(
-            default=0.65,
+            default=0.5,
             description="Минимальное косинусное сходство для релевантности (0-1). Ниже = больше воспоминаний.",
         )
 
@@ -134,43 +144,36 @@ class Filter:
         )
 
         request_timeout: int = Field(
-            default=30, description="Таймаут запросов к Ollama (секунды)"
+            default=30, description="Таймаут запросов к LiteLLM API (секунды)"
         )
 
         # === Векторное хранилище истории чата ===
         enable_chat_history_rag: bool = Field(
             default=True,
-            description="Включить RAG по истории чата (находит релевантные старые сообщения)"
+            description="Включить RAG по истории чата (находит релевантные старые сообщения)",
         )
 
         chat_history_similarity_threshold: float = Field(
-            default=0.7,
-            description="Порог сходства для поиска в истории чата (0-1)"
+            default=0.5, description="Порог сходства для поиска в истории чата (0-1)"
         )
 
         max_chat_history_results: int = Field(
             default=3,
-            description="Максимальное количество старых сообщений для подтягивания"
+            description="Максимальное количество старых сообщений для подтягивания",
         )
 
         chat_history_index_window: int = Field(
             default=50,
-            description="Индексировать последние N сообщений (0 = все сообщения)"
+            description="Индексировать последние N сообщений (0 = все сообщения)",
         )
 
         summarize_long_messages: bool = Field(
             default=True,
-            description="Суммаризировать длинные сообщения для экономии контекста"
+            description="Суммаризировать длинные сообщения (отключено - требует интеграцию с LLM)",
         )
 
         summarization_threshold: int = Field(
-            default=500,
-            description="Длина сообщения (символов) для суммаризации"
-        )
-
-        summarization_model: str = Field(
-            default="llama3.2:latest",
-            description="Модель Ollama для суммаризации текста"
+            default=300, description="Длина сообщения (символов) для суммаризации"
         )
 
     class UserValves(BaseModel):
@@ -190,7 +193,7 @@ class Filter:
         # Последние использованные воспоминания (для отображения)
         self._last_injected_memories: List[str] = []
 
-        # HTTP сессия для Ollama API
+        # HTTP сессия для LiteLLM API
         self._session: Optional[aiohttp.ClientSession] = None
 
         # === Векторное хранилище истории чата ===
@@ -210,7 +213,7 @@ class Filter:
         self._summarization_cache: Dict[str, str] = {}
 
         logger.info(
-            f"✅ Ollama Memory RAG Filter initialized (model: {self.valves.embedding_model})"
+            f"✅ LiteLLM Memory RAG Filter initialized (model: {self.valves.embedding_model})"
         )
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -221,7 +224,7 @@ class Filter:
 
     async def _generate_embedding(self, text: str) -> Optional[List[float]]:
         """
-        Генерация эмбеддинга через Ollama Embeddings API
+        Генерация эмбеддинга через LiteLLM Embeddings API (BGE-M3)
 
         Args:
             text: Текст для векторизации
@@ -231,71 +234,97 @@ class Filter:
         """
         try:
             session = await self._get_session()
-            url = f"{self.valves.ollama_base_url}/api/embeddings"
+            url = f"{self.valves.litellm_base_url}/v1/embeddings"
 
-            payload = {"model": self.valves.embedding_model, "prompt": text}
+            payload = {"model": self.valves.embedding_model, "input": text}
+
+            headers = {"Content-Type": "application/json"}
+
+            # Добавляем API ключ если указан
+            if self.valves.litellm_api_key:
+                headers["x-litellm-api-key"] = self.valves.litellm_api_key
+            else:
+                logger.warning("⚠️ litellm_api_key is EMPTY - requests may fail!")
+
+            logger.debug(
+                f"Calling LiteLLM: {url} with model={self.valves.embedding_model}"
+            )
 
             async with session.post(
                 url,
                 json=payload,
+                headers=headers,
                 timeout=aiohttp.ClientTimeout(total=self.valves.request_timeout),
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error(f"Ollama API error {response.status}: {error_text}")
+                    logger.error(
+                        f"❌ LiteLLM API error {response.status}: {error_text}"
+                    )
+                    logger.error(f"URL: {url}")
+                    logger.error(f"Model: {self.valves.embedding_model}")
+                    logger.error(
+                        f"API key: {'SET' if self.valves.litellm_api_key else 'EMPTY'}"
+                    )
                     return None
 
                 data = await response.json()
-                embedding = data.get("embedding")
 
-                if not embedding:
-                    logger.error(f"No embedding in Ollama response: {data}")
-                    return None
+                # LiteLLM возвращает в формате OpenAI: {"data": [{"embedding": [...]}]}
+                if "data" in data and len(data["data"]) > 0:
+                    embedding = data["data"][0].get("embedding")
+                    if embedding:
+                        logger.debug(f"✅ Got embedding, dimension: {len(embedding)}")
+                        return embedding
 
-                return embedding
+                logger.error(f"No embedding in LiteLLM response: {data}")
+                return None
 
         except aiohttp.ClientError as e:
-            logger.error(f"HTTP error calling Ollama: {e}")
+            logger.error(f"❌ HTTP error calling LiteLLM: {e}")
+            logger.error(f"URL: {self.valves.litellm_base_url}")
             return None
         except Exception as e:
-            logger.error(f"Error generating embedding: {e}", exc_info=True)
+            logger.error(f"❌ Error generating embedding: {e}", exc_info=True)
             return None
 
-    async def _summarize_text(self, text: str, max_length: int = 200) -> Optional[str]:
+    async def _summarize_text(
+        self, text: str, max_length: int = 200, model_id: Optional[str] = None
+    ) -> Optional[str]:
         """
-        Суммаризация текста через Ollama Chat API
+        Суммаризация текста через OpenWebUI Chat Completion API
 
         Args:
             text: Текст для суммаризации
             max_length: Максимальная длина саммари (символов)
+            model_id: ID модели OpenWebUI для суммаризации
 
         Returns:
-            str: Краткое содержание или None при ошибке
+            str: Краткое содержание или обрезанный текст при ошибке
         """
         # Проверяем кэш
         text_hash = str(hash(text))
         if text_hash in self._summarization_cache:
             return self._summarization_cache[text_hash]
 
+        # Если модель не указана или суммаризация отключена, просто обрезаем
+        if not model_id or not self.valves.use_chat_model_for_summarization:
+            return text[:max_length] + "..." if len(text) > max_length else text
+
         try:
             session = await self._get_session()
-            url = f"{self.valves.ollama_base_url}/api/generate"
+            # OpenWebUI использует внутренний endpoint для chat completions
+            url = "http://localhost:8080/api/chat/completions"
 
             # Промпт для суммаризации
-            prompt = f"""Summarize the following message in 1-2 concise sentences (max {max_length} chars). Focus on key information and context:
-
-{text[:2000]}
-
-Summary:"""
+            prompt = f"Summarize the following message in 1-2 concise sentences (max {max_length} chars). Focus on key information:\n\n{text[:2000]}"
 
             payload = {
-                "model": self.valves.summarization_model,
-                "prompt": prompt,
+                "model": model_id,
+                "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
-                "options": {
-                    "temperature": 0.3,  # Низкая температура для более точной суммаризации
-                    "num_predict": 100,   # Ограничение длины
-                }
+                "temperature": 0.3,
+                "max_tokens": 100,
             }
 
             async with session.post(
@@ -304,32 +333,33 @@ Summary:"""
                 timeout=aiohttp.ClientTimeout(total=self.valves.request_timeout),
             ) as response:
                 if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"Ollama summarization error {response.status}: {error_text}")
-                    return None
+                    logger.warning(
+                        f"Summarization failed with status {response.status}, using truncation"
+                    )
+                    return text[:max_length] + "..." if len(text) > max_length else text
 
                 data = await response.json()
-                summary = data.get("response", "").strip()
 
-                if not summary:
-                    logger.warning("Empty summary from Ollama")
-                    # Fallback: берём первые N символов
+                # Извлекаем текст ответа
+                summary = None
+                if "choices" in data and len(data["choices"]) > 0:
+                    summary = data["choices"][0].get("message", {}).get("content", "")
+
+                if not summary or not summary.strip():
+                    logger.warning("Empty summary from model, using truncation")
                     return text[:max_length] + "..." if len(text) > max_length else text
 
                 # Обрезаем если слишком длинный
+                summary = summary.strip()
                 if len(summary) > max_length:
                     summary = summary[:max_length] + "..."
 
                 # Кэшируем
                 self._summarization_cache[text_hash] = summary
-
                 return summary
 
-        except aiohttp.ClientError as e:
-            logger.error(f"HTTP error during summarization: {e}")
-            return text[:max_length] + "..." if len(text) > max_length else text
         except Exception as e:
-            logger.error(f"Error summarizing text: {e}", exc_info=True)
+            logger.warning(f"Summarization error: {e}, using truncation")
             return text[:max_length] + "..." if len(text) > max_length else text
 
     def _cosine_similarity(self, vec1: List[float], vec2: List[float]) -> float:
@@ -363,11 +393,13 @@ Summary:"""
         body: Dict[str, Any],
         __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
         __user__: Optional[Dict[str, Any]] = None,
+        __model__: Optional[Dict[str, Any]] = None,
+        __request__: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Обработка входящего запроса:
         1. Извлекает последнее сообщение пользователя
-        2. Ищет релевантные воспоминания через Ollama embeddings
+        2. Ищет релевантные воспоминания через LiteLLM embeddings (BGE-M3)
         3. Добавляет их в системный промпт
         """
 
@@ -408,6 +440,24 @@ Summary:"""
                 logger.warning("User ID not found in __user__")
                 return body
 
+            # === ПРОВЕРКА: Это команда \clear? ===
+            if last_user_message.strip().lower() in ["\\clear", "/clear"]:
+                logger.info("Detected \\clear command - clearing all memories")
+
+                success = await self.clear_all_memories(
+                    user_id=user_id, __event_emitter__=__event_emitter__
+                )
+
+                if success:
+                    confirmation_msg = "✅ Все воспоминания успешно удалены."
+
+                    # Добавляем системное сообщение с подтверждением
+                    body["messages"].append(
+                        {"role": "system", "content": confirmation_msg}
+                    )
+
+                return body
+
             # === ПРОВЕРКА: Это запрос на сохранение знания? ===
             memory_to_save = self._is_memory_save_request(last_user_message)
 
@@ -418,7 +468,7 @@ Summary:"""
                 success = await self.add_memory(
                     content=memory_to_save,
                     user_id=user_id,
-                    __event_emitter__=__event_emitter__
+                    __event_emitter__=__event_emitter__,
                 )
 
                 if success:
@@ -429,10 +479,9 @@ Summary:"""
                     )
 
                     # Добавляем системное сообщение с подтверждением
-                    body["messages"].append({
-                        "role": "system",
-                        "content": confirmation_msg
-                    })
+                    body["messages"].append(
+                        {"role": "system", "content": confirmation_msg}
+                    )
 
                 # Возвращаем body (можно добавить флаг, что LLM должна ответить подтверждением)
                 return body
@@ -440,9 +489,17 @@ Summary:"""
             # === ИНДЕКСАЦИЯ ИСТОРИИ ЧАТА ===
             # Индексируем историю чата для векторного поиска
             if self.valves.enable_chat_history_rag and len(body["messages"]) > 1:
+                # Получаем model_id из body или __model__
+                model_id = body.get("model") or (
+                    __model__.get("id") if __model__ else None
+                )
+
                 await self._index_chat_history(
-                    messages=body["messages"][:-1],  # Исключаем последнее сообщение (текущий запрос)
-                    __event_emitter__=__event_emitter__
+                    messages=body["messages"][
+                        :-1
+                    ],  # Исключаем последнее сообщение (текущий запрос)
+                    __event_emitter__=__event_emitter__,
+                    summarization_model_id=model_id,
                 )
 
             # === ПОИСК РЕЛЕВАНТНЫХ СТАРЫХ СООБЩЕНИЙ ===
@@ -461,7 +518,7 @@ Summary:"""
 
                 relevant_history = await self._search_chat_history(
                     query_text=last_user_message,
-                    exclude_recent=5  # Исключаем последние 5 сообщений (уже в контексте)
+                    exclude_recent=2,  # Исключаем последние 2 сообщения (уже в контексте)
                 )
 
             # === ПОИСК РЕЛЕВАНТНЫХ ВОСПОМИНАНИЙ (LONG-TERM MEMORY) ===
@@ -470,14 +527,15 @@ Summary:"""
                     {
                         "type": "status",
                         "data": {
-                            "description": "🔍 Searching relevant memories via Ollama...",
+                            "description": "🔍 Searching relevant memories via LiteLLM...",
                             "done": False,
                         },
                     }
                 )
 
             relevant_memories = await self._find_relevant_memories(
-                query_text=last_user_message, user_id=user_id
+                query_text=last_user_message,
+                user_id=user_id,
             )
 
             # === ФОРМИРОВАНИЕ И ИНЪЕКЦИЯ КОНТЕКСТА ===
@@ -486,7 +544,9 @@ Summary:"""
             history_context = ""
             if relevant_history:
                 history_context = self._format_chat_history_context(relevant_history)
-                logger.info(f"Found {len(relevant_history)} relevant messages from chat history")
+                logger.info(
+                    f"Found {len(relevant_history)} relevant messages from chat history"
+                )
 
             # Формируем контекст из долговременных воспоминаний
             memory_context = ""
@@ -604,6 +664,7 @@ Summary:"""
     def _generate_message_hash(self, role: str, content: str, index: int) -> str:
         """Генерирует уникальный хэш для сообщения"""
         import hashlib
+
         data = f"{role}:{index}:{content[:100]}"
         return hashlib.md5(data.encode()).hexdigest()
 
@@ -612,6 +673,7 @@ Summary:"""
         role: str,
         content: str,
         index: int,
+        summarization_model_id: Optional[str] = None,
     ) -> bool:
         """
         Индексирует одно сообщение в векторное хранилище
@@ -647,7 +709,9 @@ Summary:"""
             # Суммаризируем если нужно
             summary = None
             if needs_summary:
-                summary = await self._summarize_text(content, max_length=200)
+                summary = await self._summarize_text(
+                    content, max_length=200, model_id=summarization_model_id
+                )
                 if not summary:
                     summary = content[:200] + "..."
             else:
@@ -657,11 +721,14 @@ Summary:"""
             embedding = await self._generate_embedding(summary)
 
             if not embedding:
-                logger.warning(f"Failed to generate embedding for message at index {index}")
+                logger.warning(
+                    f"Failed to generate embedding for message at index {index}"
+                )
                 return False
 
             # Сохраняем в индекс
             import time
+
             self._chat_history_index[msg_hash] = {
                 "index": index,
                 "role": role,
@@ -682,6 +749,7 @@ Summary:"""
         self,
         messages: List[Dict[str, Any]],
         __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
+        summarization_model_id: Optional[str] = None,
     ) -> int:
         """
         Индексирует историю чата (или её часть)
@@ -702,7 +770,7 @@ Summary:"""
         window_size = self.valves.chat_history_index_window
         if window_size > 0:
             # Берём только последние N сообщений
-            messages_to_index = messages[-window_size:]
+            messages_to_index = messages[-int(window_size) :]
             start_index = max(0, len(messages) - window_size)
         else:
             # Индексируем всё
@@ -725,11 +793,18 @@ Summary:"""
             content = msg.get("content", "")
             actual_index = start_index + i
 
-            success = await self._index_message(role, content, actual_index)
+            success = await self._index_message(
+                role,
+                content,
+                actual_index,
+                summarization_model_id=summarization_model_id,
+            )
             if success:
                 indexed_count += 1
 
-        logger.info(f"Indexed {indexed_count}/{len(messages_to_index)} messages from chat history")
+        logger.info(
+            f"Indexed {indexed_count}/{len(messages_to_index)} messages from chat history"
+        )
 
         return indexed_count
 
@@ -767,7 +842,7 @@ Summary:"""
                 content = message[start_pos:].strip()
 
                 # Убираем возможные кавычки в начале и конце
-                content = content.strip('"\'')
+                content = content.strip("\"'")
 
                 if content:
                     return content
@@ -801,46 +876,88 @@ Summary:"""
             query_embedding = await self._generate_embedding(query_text)
             if not query_embedding:
                 logger.error("Failed to generate query embedding for history search")
+                logger.error(
+                    f"Check: litellm_api_key={'SET' if self.valves.litellm_api_key else 'EMPTY'}"
+                )
+                logger.error(f"Check: litellm_base_url={self.valves.litellm_base_url}")
+                logger.error(f"Check: embedding_model={self.valves.embedding_model}")
                 return []
+
+            logger.info(
+                f"✅ Generated query embedding, dimension: {len(query_embedding)}"
+            )
 
             # Вычисляем сходство со всеми проиндексированными сообщениями
             similarities = []
-            max_index = max((item["index"] for item in self._chat_history_index.values()), default=0)
+            all_similarities = []  # Для отладки
+            max_index = max(
+                (item["index"] for item in self._chat_history_index.values()), default=0
+            )
+
+            logger.debug(
+                f"Searching through {len(self._chat_history_index)} indexed messages"
+            )
+            logger.debug(
+                f"Excluding last {exclude_recent} messages (max_index: {max_index})"
+            )
 
             for msg_hash, msg_data in self._chat_history_index.items():
                 msg_index = msg_data["index"]
 
                 # Исключаем последние N сообщений (текущий контекст)
                 if msg_index > max_index - exclude_recent:
+                    logger.debug(f"  Skipping recent message at index {msg_index}")
                     continue
 
                 msg_embedding = msg_data["embedding"]
                 similarity = self._cosine_similarity(query_embedding, msg_embedding)
 
-                if similarity >= self.valves.chat_history_similarity_threshold:
-                    similarities.append({
+                # Логируем ВСЕ similarity scores для отладки
+                all_similarities.append(
+                    {
                         "index": msg_index,
                         "role": msg_data["role"],
-                        "content": msg_data["content"],
-                        "summary": msg_data["summary"],
                         "similarity": similarity,
-                        "timestamp": msg_data["timestamp"],
-                    })
+                        "summary": msg_data["summary"][:50],
+                    }
+                )
+
+                if similarity >= self.valves.chat_history_similarity_threshold:
+                    similarities.append(
+                        {
+                            "index": msg_index,
+                            "role": msg_data["role"],
+                            "content": msg_data["content"],
+                            "summary": msg_data["summary"],
+                            "similarity": similarity,
+                            "timestamp": msg_data["timestamp"],
+                        }
+                    )
+
+            # Логируем ВСЕ similarity scores (отсортированные)
+            all_similarities.sort(key=lambda x: x["similarity"], reverse=True)
+            logger.info(
+                f"=== All similarity scores (total: {len(all_similarities)}) ==="
+            )
+            for item in all_similarities:
+                logger.info(
+                    f"  Index {item['index']} ({item['role']}): {item['similarity']:.3f} | {item['summary']}"
+                )
 
             # Сортируем по сходству (убывание)
             similarities.sort(key=lambda x: x["similarity"], reverse=True)
 
             # Берём топ-N
-            top_results = similarities[:self.valves.max_chat_history_results]
+            top_results = similarities[: self.valves.max_chat_history_results]
 
-            logger.debug(
+            logger.info(
                 f"Found {len(top_results)} relevant messages from chat history "
                 f"(threshold: {self.valves.chat_history_similarity_threshold})"
             )
 
             for item in top_results:
-                logger.debug(
-                    f"  - Index {item['index']} ({item['role']}), "
+                logger.info(
+                    f"  ✅ Index {item['index']} ({item['role']}), "
                     f"Similarity: {item['similarity']:.3f} | {item['summary'][:50]}..."
                 )
 
@@ -850,25 +967,25 @@ Summary:"""
             logger.error(f"Error searching chat history: {e}", exc_info=True)
             return []
 
-    async def _find_relevant_memories(self, query_text: str, user_id: str) -> List[str]:
+    async def _find_relevant_memories(
+        self,
+        query_text: str,
+        user_id: str,
+    ) -> List[str]:
         """
-        Векторный поиск релевантных воспоминаний через Ollama
+        Векторный поиск релевантных воспоминаний через LiteLLM (BGE-M3)
 
         Returns:
             List[str]: Список текстов релевантных воспоминаний
         """
 
-        if not query_memory or not QueryMemoryForm:
-            logger.warning("OpenWebUI memory functions not available")
+        if not Memories:
+            logger.warning("OpenWebUI Memories model not available")
             return []
 
         try:
-            # 1. Получаем все воспоминания пользователя
-            query_form = QueryMemoryForm(
-                user_id=user_id, content=""  # Пустой запрос = все воспоминания
-            )
-
-            all_memories = await query_memory(query_form)
+            # Получаем все воспоминания пользователя напрямую
+            all_memories = Memories.get_memories_by_user_id(user_id)
 
             if not all_memories:
                 logger.debug(f"No memories found for user {user_id}")
@@ -876,34 +993,34 @@ Summary:"""
 
             logger.debug(f"Found {len(all_memories)} total memories for user")
 
-            # 2. Фильтрация по Memory Bank (если включено)
-            if self.valves.use_memory_banks:
-                all_memories = [
-                    m
-                    for m in all_memories
-                    if self._extract_memory_bank(m.get("memory", ""))
-                    == self.valves.active_memory_bank
-                ]
-                logger.debug(
-                    f"Filtered to {len(all_memories)} memories in '{self.valves.active_memory_bank}' bank"
-                )
-
-            if not all_memories:
-                return []
-
-            # 3. Генерируем эмбеддинг запроса через Ollama
+            # Генерируем эмбеддинг запроса через LiteLLM
             query_embedding = await self._generate_embedding(query_text)
 
             if not query_embedding:
-                logger.error("Failed to generate query embedding")
+                logger.error("Failed to generate query embedding for memory search")
                 return []
 
-            # 4. Вычисляем сходство с каждым воспоминанием
+            # Вычисляем сходство с каждым воспоминанием
             similarities = []
 
             for memory in all_memories:
-                mem_id = memory.get("id")
-                mem_text = memory.get("memory", "")
+                # Извлекаем текст воспоминания (может быть в разных полях)
+                mem_text = None
+                mem_id = None
+
+                if isinstance(memory, dict):
+                    mem_text = (
+                        memory.get("memory")
+                        or memory.get("content")
+                        or memory.get("text")
+                    )
+                    mem_id = memory.get("id")
+                else:
+                    # Если это объект
+                    mem_text = getattr(memory, "content", None) or getattr(
+                        memory, "memory", None
+                    )
+                    mem_id = getattr(memory, "id", None)
 
                 if not mem_text:
                     continue
@@ -911,6 +1028,7 @@ Summary:"""
                 # Получаем/генерируем эмбеддинг воспоминания
                 if (
                     self.valves.cache_embeddings
+                    and mem_id
                     and mem_id in self._memory_embeddings_cache
                 ):
                     mem_embedding = self._memory_embeddings_cache[mem_id]
@@ -923,36 +1041,44 @@ Summary:"""
                         )
                         continue
 
-                    if self.valves.cache_embeddings:
+                    if self.valves.cache_embeddings and mem_id:
                         self._memory_embeddings_cache[mem_id] = mem_embedding
 
                 # Косинусное сходство
                 similarity = self._cosine_similarity(query_embedding, mem_embedding)
 
-                similarities.append(
-                    {"text": mem_text, "similarity": similarity, "id": mem_id}
-                )
+                if similarity >= self.valves.vector_similarity_threshold:
+                    similarities.append(
+                        {"text": mem_text, "similarity": similarity, "id": mem_id}
+                    )
 
-            # 5. Фильтруем по порогу и сортируем
-            relevant = [
-                item
-                for item in similarities
-                if item["similarity"] >= self.valves.vector_similarity_threshold
-            ]
+            # Сортируем по сходству (убывание)
+            similarities.sort(key=lambda x: x["similarity"], reverse=True)
 
-            relevant.sort(key=lambda x: x["similarity"], reverse=True)
+            # Дедупликация: убираем дубликаты по тексту воспоминания
+            seen_texts = set()
+            unique_memories = []
+            for item in similarities:
+                text_lower = item["text"].lower().strip()
+                if text_lower not in seen_texts:
+                    seen_texts.add(text_lower)
+                    unique_memories.append(item)
+                else:
+                    logger.debug(f"Skipping duplicate memory: {item['text'][:50]}...")
 
-            # 6. Берём топ-N
-            top_memories = relevant[: self.valves.max_memories_to_inject]
+            # Берём топ-N уникальных
+            top_memories = unique_memories[: self.valves.max_memories_to_inject]
 
-            logger.debug(
-                f"Selected {len(top_memories)} relevant memories (threshold: {self.valves.vector_similarity_threshold})"
+            logger.info(
+                f"Found {len(top_memories)} relevant unique memories "
+                f"(threshold: {self.valves.vector_similarity_threshold}, "
+                f"removed {len(similarities) - len(unique_memories)} duplicates)"
             )
 
-            # Логируем сходство для отладки
+            # Логируем similarity scores для отладки
             for item in top_memories:
-                logger.debug(
-                    f"  - Similarity: {item['similarity']:.3f} | {item['text'][:50]}..."
+                logger.info(
+                    f"  Memory: similarity={item['similarity']:.3f} | {item['text'][:50]}..."
                 )
 
             return [item["text"] for item in top_memories]
@@ -983,7 +1109,9 @@ Summary:"""
 
             # Форматируем как диалог
             role_label = "User" if role == "user" else "Assistant"
-            formatted_items.append(f"[Msg #{index}, relevance: {similarity:.2f}] {role_label}: {summary}")
+            formatted_items.append(
+                f"[Msg #{index}, relevance: {similarity:.2f}] {role_label}: {summary}"
+            )
 
         formatted = "\n".join(formatted_items)
 
@@ -1114,15 +1242,16 @@ Use this information to personalize your response when appropriate.
 
             # Сохраняем воспоминание
             result = Memories.insert_new_memory(
-                user_id=str(user_id),
-                content=content.strip()
+                user_id=str(user_id), content=content.strip()
             )
 
             if result:
-                logger.info(f"✅ Successfully saved memory for user {user_id}: {content[:50]}...")
+                logger.info(
+                    f"✅ Successfully saved memory for user {user_id}: {content[:50]}..."
+                )
 
                 # Инвалидируем кэш эмбеддингов (т.к. появилось новое воспоминание)
-                if self.valves.cache_embeddings and hasattr(result, 'id'):
+                if self.valves.cache_embeddings and hasattr(result, "id"):
                     # Кэш обновится автоматически при следующем поиске
                     logger.debug("Memory cache will be updated on next search")
 
@@ -1207,7 +1336,7 @@ Use this information to personalize your response when appropriate.
             result = await self.add_memory(
                 content=memory,
                 user_id=user_id,
-                __event_emitter__=None  # Не эмитим статус для каждого
+                __event_emitter__=None,  # Не эмитим статус для каждого
             )
 
             if result:
@@ -1232,13 +1361,147 @@ Use this information to personalize your response when appropriate.
                 }
             )
 
-        logger.info(f"Batch memory save complete: {success_count} success, {failed_count} failed")
+        logger.info(
+            f"Batch memory save complete: {success_count} success, {failed_count} failed"
+        )
 
         return {
             "success": success_count,
             "failed": failed_count,
-            "total": len(memories)
+            "total": len(memories),
         }
+
+    async def clear_all_memories(
+        self,
+        user_id: str,
+        __event_emitter__: Optional[Callable[[dict], Awaitable[None]]] = None,
+    ) -> bool:
+        """
+        Удаляет все воспоминания пользователя
+
+        Args:
+            user_id: ID пользователя
+            __event_emitter__: Эмиттер для отправки статуса
+
+        Returns:
+            bool: True если успешно, False при ошибке
+        """
+
+        if not Memories:
+            logger.error("Memories model not available - running outside OpenWebUI?")
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": "⚠️ Memory storage not available",
+                            "done": True,
+                        },
+                    }
+                )
+            return False
+
+        try:
+            # Эмитим статус начала удаления
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": "🗑️ Clearing all memories...",
+                            "done": False,
+                        },
+                    }
+                )
+
+            # Получаем все воспоминания пользователя
+            all_memories = Memories.get_memories_by_user_id(user_id)
+
+            if not all_memories:
+                logger.info(f"No memories to delete for user {user_id}")
+                if __event_emitter__:
+                    await __event_emitter__(
+                        {
+                            "type": "status",
+                            "data": {
+                                "description": "ℹ️ No memories found to delete",
+                                "done": True,
+                            },
+                        }
+                    )
+                return True
+
+            deleted_count = 0
+            failed_count = 0
+
+            # Удаляем каждое воспоминание
+            for memory in all_memories:
+                try:
+                    # Извлекаем ID воспоминания
+                    memory_id = None
+                    if isinstance(memory, dict):
+                        memory_id = memory.get("id")
+                    else:
+                        memory_id = getattr(memory, "id", None)
+
+                    if not memory_id:
+                        logger.warning("Memory without ID, skipping")
+                        failed_count += 1
+                        continue
+
+                    # Удаляем воспоминание
+                    result = Memories.delete_memory_by_id(memory_id)
+
+                    if result:
+                        deleted_count += 1
+                        # Удаляем из кэша эмбеддингов
+                        if memory_id in self._memory_embeddings_cache:
+                            del self._memory_embeddings_cache[memory_id]
+                    else:
+                        failed_count += 1
+                        logger.warning(f"Failed to delete memory {memory_id}")
+
+                except Exception as e:
+                    logger.error(f"Error deleting individual memory: {e}")
+                    failed_count += 1
+
+            # Итоговый статус
+            if __event_emitter__:
+                if failed_count == 0:
+                    status_msg = f"✅ Successfully deleted {deleted_count} memories"
+                else:
+                    status_msg = (
+                        f"⚠️ Deleted {deleted_count} memories ({failed_count} failed)"
+                    )
+
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": status_msg,
+                            "done": True,
+                        },
+                    }
+                )
+
+            logger.info(
+                f"✅ Cleared {deleted_count} memories for user {user_id} ({failed_count} failed)"
+            )
+            return failed_count == 0
+
+        except Exception as e:
+            logger.error(f"❌ Error clearing memories: {e}", exc_info=True)
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {
+                            "description": f"❌ Error clearing memories: {str(e)}",
+                            "done": True,
+                        },
+                    }
+                )
+            return False
 
     async def __del__(self):
         """Cleanup при удалении фильтра"""

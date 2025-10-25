@@ -1,4 +1,4 @@
-# OpenWebUI Advanced Memory RAG Filter
+# OpenWebUI Advanced Memory RAG Filter (LiteLLM + BGE-M3)
 
 Интеллектуальный фильтр с **векторным поиском воспоминаний** + **RAG по истории чата** для работы с большими диалогами.
 
@@ -6,15 +6,14 @@
 
 ### 1. **Долговременная память (Long-term Memory)**
 
-- ✅ Векторный поиск релевантных воспоминаний через Ollama Embeddings
+- ✅ Векторный поиск релевантных воспоминаний через LiteLLM Embeddings (BGE-M3)
 - ✅ Автоматическое сохранение знаний по команде пользователя
 - ✅ Инъекция персональных воспоминаний в контекст LLM
 
 ### 2. **RAG по истории чата (Chat History RAG)** 🆕
 
 - ✅ Автоматическая индексация всех сообщений в диалоге
-- ✅ Векторный поиск релевантных старых сообщений
-- ✅ Суммаризация длинных сообщений для экономии контекста
+- ✅ Векторный поиск релевантных старых сообщений через BGE-M3
 - ✅ Решает проблему потери контекста в длинных диалогах
 
 **Проблема:** LLM забывает что было 10+ сообщений назад
@@ -22,11 +21,38 @@
 
 ## 📦 Установка
 
-### Шаг 1: Установите Ollama модели
+### Шаг 1: Разверните LiteLLM локально (рекомендуется)
+
+**Вариант A: Локальный LiteLLM через Docker** (рекомендуется)
+
+1. Загрузите модель BGE-M3:
+```bash
+docker exec ollama ollama pull bge-m3
+```
+
+2. Запустите LiteLLM сервис:
+```bash
+docker compose up -d litellm
+```
+
+3. Проверьте работу:
+```bash
+curl http://localhost:4000/health
+curl http://localhost:4000/v1/models
+```
+
+📖 **Подробная инструкция:** [SETUP_LITELLM.md](SETUP_LITELLM.md)
+
+---
+
+**Вариант B: Удаленный LiteLLM сервер**
+
+Если у вас уже есть LiteLLM на сервере:
 
 ```bash
-ollama pull nomic-embed-text   # для embeddings
-ollama pull llama3.2:latest    # для суммаризации (опционально)
+# Проверьте доступность
+curl https://your-litellm-server.com/v1/models \
+  -H "Authorization: Bearer your-api-key"
 ```
 
 ### Шаг 2: Добавьте фильтр в OpenWebUI
@@ -37,13 +63,33 @@ ollama pull llama3.2:latest    # для суммаризации (опциона
 4. Скопируйте содержимое файла `memory_rag_filter.py`
 5. Вставьте в редактор и сохраните
 
-### Шаг 3: Настройте (опционально)
+### Шаг 3: Настройте фильтр
 
-В настройках фильтра можно изменить:
+В настройках фильтра укажите:
 
-- `ollama_base_url` - адрес Ollama API
-- `enable_chat_history_rag` - включить/выключить RAG по истории (по умолчанию: включен)
-- `chat_history_similarity_threshold` - порог релевантности для истории (0.7)
+**Для локального LiteLLM:**
+```yaml
+litellm_base_url: http://litellm:4000
+litellm_api_key: sk-litellm-master-key
+embedding_model: bge-m3
+```
+
+**Для удаленного LiteLLM:**
+```yaml
+litellm_base_url: https://your-server.com
+litellm_api_key: your-api-key
+embedding_model: bge-m3
+```
+
+**Опциональные параметры:**
+- `enable_chat_history_rag` = `true` - RAG по истории чата
+- `chat_history_similarity_threshold` = `0.5` - порог релевантности (0-1)
+- `vector_similarity_threshold` = `0.65` - порог для долговременной памяти
+
+**💡 Архитектура:**
+- **Эмбеддинги:** LiteLLM → Ollama BGE-M3 (1024 dimensions, multilingual)
+- **Долговременная память:** OpenWebUI Memories API (PostgreSQL)
+- **Хранение истории:** In-memory (только текущая сессия)
 
 ## 🚀 Использование
 
@@ -90,117 +136,49 @@ save to memory: my favorite color is blue
 
 | Параметр | По умолчанию | Описание |
 |----------|--------------|----------|
+| `litellm_base_url` | `https://litellm.scibox.inno.tech` | URL LiteLLM API сервера |
+| `litellm_api_key` | `""` | API ключ для LiteLLM |
+| `embedding_model` | `bge-m3` | Модель для эмбеддингов |
 | `enable_chat_history_rag` | `true` | RAG по истории чата |
 | `chat_history_similarity_threshold` | `0.7` | Порог релевантности для истории (0-1) |
 | `max_chat_history_results` | `3` | Сколько старых сообщений подтягивать |
 | `vector_similarity_threshold` | `0.65` | Порог для долговременной памяти (0-1) |
 | `max_memories_to_inject` | `5` | Максимум воспоминаний в контексте |
-| `summarize_long_messages` | `true` | Суммаризировать длинные сообщения |
 
-## 🔧 Отладка
+## 📚 Дополнительная документация
 
-### Проблема: "No relevant memories found"
+- **[CHAT_HISTORY_RAG.md](CHAT_HISTORY_RAG.md)** - Подробное описание RAG по истории чата
+- **[README_MEMORY_FILTER.md](README_MEMORY_FILTER.md)** - Полная документация по фильтру
+- **[DEMO_RESULTS.md](DEMO_RESULTS.md)** - Результаты тестирования
 
-**Причины:**
-1. Нет воспоминаний в БД для пользователя
-2. Порог `vector_similarity_threshold` слишком высокий
-3. Воспоминания не релевантны запросу
+## 🔧 Troubleshooting
 
+**Проблема:** LiteLLM API не доступен
 **Решение:**
-```python
-# Проверьте логи OpenWebUI
-docker logs openwebui | grep "memory_rag"
+- Проверьте доступность: `curl https://your-litellm-server.com/v1/models -H "x-litellm-api-key: YOUR_KEY"`
+- Убедитесь что `litellm_base_url` указан правильно
+- Проверьте что API ключ (`litellm_api_key`) корректный
 
-# Понизьте порог
-vector_similarity_threshold: 0.5  # Было 0.65
-```
-
-### Проблема: "Embedding model not available"
-
-**Причина:** Не установлен `sentence-transformers`
-
+**Проблема:** Модель BGE-M3 не найдена
 **Решение:**
+- Убедитесь что модель `bge-m3` доступна на вашем LiteLLM сервере
+- Проверьте список моделей: `GET /v1/models`
+
+**Проблема:** Не находит релевантные сообщения
+**Решение:** Уменьшите `chat_history_similarity_threshold` с 0.7 до 0.6
+
+## ✅ Тестирование
+
+Запустите тесты:
+
 ```bash
-# В контейнере OpenWebUI
-docker exec -it openwebui pip install sentence-transformers
-
-# Перезапустите контейнер
-docker restart openwebui
+cd openwebui_filters
+python test_chat_history_rag.py
 ```
 
-### Проблема: Слишком много нерелевантных воспоминаний
-
-**Решение:**
-```python
-# Увеличьте порог
-vector_similarity_threshold: 0.75  # Было 0.65
-
-# Уменьшите количество
-max_memories_to_inject: 3  # Было 5
-```
-
-## 📊 Производительность
-
-### Скорость
-
-- **Векторный поиск:** ~10-50ms для 100 воспоминаний
-- **Генерация эмбеддинга:** ~50-100ms
-- **Общая задержка:** ~100-200ms
-
-### Использование памяти
-
-- **Модель эмбеддингов:** ~80MB RAM
-- **Кэш эмбеддингов:** ~1KB на воспоминание
-- **Для 1000 воспоминаний:** ~81MB RAM
-
-## 🆚 Сравнение с полной версией Adaptive Memory
-
-| Функция | RAG Simple | Adaptive Memory v3.0 |
-|---------|------------|---------------------|
-| **Векторный поиск** | ✅ | ✅ |
-| **Инъекция в контекст** | ✅ | ✅ |
-| **Автосохранение** | ❌ | ✅ |
-| **LLM оценка релевантности** | ❌ | ✅ (опционально) |
-| **Дедупликация** | ❌ | ✅ |
-| **Кластеризация** | ❌ | ✅ |
-| **Memory Banks** | ❌ (упрощённо) | ✅ |
-| **Размер кода** | ~300 строк | ~2000+ строк |
-| **Сложность** | Простая | Высокая |
-
-## 🔐 Memory Banks (опционально)
-
-Если вы используете теги в воспоминаниях, можно фильтровать по банкам:
-
-```python
-# В настройках фильтра
-use_memory_banks: true
-active_memory_bank: "Personal"  # или "Work" или "General"
-```
-
-**Формат воспоминаний с банками:**
-```
-[Bank: Personal] User lives in Moscow
-[Bank: Work] User is a Python developer at Yandex
-[Bank: General] User is interested in astronomy
-```
-
-Тогда при `active_memory_bank: "Work"` будут использоваться только рабочие воспоминания.
-
-## 📝 Лицензия
-
-MIT
+Все 5 тестов должны пройти успешно.
 
 ---
 
-## 🆘 Поддержка
-
-При возникновении проблем:
-1. Проверьте логи: `docker logs openwebui | grep "memory_rag"`
-2. Убедитесь что зависимости установлены
-3. Проверьте что воспоминания добавлены в БД
-4. Откройте issue в репозитории
-
----
-
-**Автор:** DVZolotarev
-**Дата:** 2025-10-20
+**Лицензия:** MIT
+**Автор:** Разработано для OpenWebUI
